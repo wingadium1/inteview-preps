@@ -201,6 +201,7 @@ public class SecurityConfig {
 
 ### Example 4: Exception Handling
 ```java
+@Slf4j  // Lombok annotation, or use: private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 @ControllerAdvice
 public class GlobalExceptionHandler {
     

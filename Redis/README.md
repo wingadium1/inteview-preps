@@ -292,7 +292,7 @@ pipe.execute()
 import redis
 import json
 
-r = redis.Redis()
+r = redis.Redis(host='localhost', port=6379, db=0)
 
 def get_user(user_id):
     # Try cache first
@@ -300,8 +300,8 @@ def get_user(user_id):
     if cached:
         return json.loads(cached)
     
-    # Get from database
-    user = database.get_user(user_id)
+    # Get from database (pseudo-code - implement based on your database)
+    user = database.get_user(user_id)  # Replace with actual database call
     
     # Cache for 1 hour
     r.setex(f"user:{user_id}", 3600, json.dumps(user))
@@ -311,6 +311,10 @@ def get_user(user_id):
 
 #### 2. Rate Limiting
 ```python
+import redis
+
+r = redis.Redis(host='localhost', port=6379, db=0)
+
 def is_rate_limited(user_id, limit=10, window=60):
     key = f"rate_limit:{user_id}"
     
@@ -348,7 +352,10 @@ def get_user_rank(user_id):
 
 #### 5. Distributed Lock
 ```python
+import redis
 import uuid
+
+r = redis.Redis(host='localhost', port=6379, db=0)
 
 def acquire_lock(lock_name, ttl=10):
     """Acquire distributed lock with unique identifier"""

@@ -71,6 +71,7 @@ public class OrderController {
         if (available) {
             return orderRepository.save(order);
         }
+        // Custom exception - define as: public class OutOfStockException extends RuntimeException
         throw new OutOfStockException();
     }
 }
