@@ -179,6 +179,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+            // Disable CSRF for stateless JWT authentication
+            // For session-based auth, keep CSRF enabled
             .csrf().disable()
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/public/**").permitAll()
@@ -215,9 +217,12 @@ public class GlobalExceptionHandler {
     
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
+        // Log the exception for debugging
+        log.error("Unexpected error occurred", ex);
+        
         ErrorResponse error = new ErrorResponse(
             HttpStatus.INTERNAL_SERVER_ERROR.value(),
-            "An error occurred",
+            "An error occurred: " + ex.getMessage(),
             LocalDateTime.now()
         );
         return new ResponseEntity<>(error, HttpStatus.INTERNAL_SERVER_ERROR);

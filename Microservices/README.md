@@ -425,6 +425,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+            // Disable CSRF for stateless JWT authentication
+            // Note: For session-based authentication, keep CSRF enabled
             .csrf().disable()
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/public/**").permitAll()

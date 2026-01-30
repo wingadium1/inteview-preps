@@ -223,11 +223,13 @@ session.close();
 ```
 
 ### Example 6: Second-Level Cache Configuration
-```java
-// Enable second-level cache in properties
+```properties
+# hibernate.properties or application.properties
 hibernate.cache.use_second_level_cache=true
 hibernate.cache.region.factory_class=org.hibernate.cache.ehcache.EhCacheRegionFactory
+```
 
+```java
 // Mark entity as cacheable
 @Entity
 @Cacheable

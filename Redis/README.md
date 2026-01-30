@@ -313,11 +313,14 @@ def get_user(user_id):
 ```python
 def is_rate_limited(user_id, limit=10, window=60):
     key = f"rate_limit:{user_id}"
-    count = r.incr(key)
     
-    if count == 1:
-        r.expire(key, window)
+    # Using pipeline to ensure atomicity and avoid race conditions
+    pipe = r.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, window)
+    result = pipe.execute()
     
+    count = result[0]
     return count > limit
 ```
 
@@ -345,11 +348,24 @@ def get_user_rank(user_id):
 
 #### 5. Distributed Lock
 ```python
-def acquire_lock(lock_name, ttl=10):
-    return r.set(lock_name, "locked", nx=True, ex=ttl)
+import uuid
 
-def release_lock(lock_name):
-    r.delete(lock_name)
+def acquire_lock(lock_name, ttl=10):
+    """Acquire distributed lock with unique identifier"""
+    lock_id = str(uuid.uuid4())
+    acquired = r.set(lock_name, lock_id, nx=True, ex=ttl)
+    return (lock_id, acquired) if acquired else (None, False)
+
+def release_lock(lock_name, lock_id):
+    """Release lock only if owned by this client (using Lua script for atomicity)"""
+    lua_script = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+    else
+        return 0
+    end
+    """
+    return r.eval(lua_script, 1, lock_name, lock_id)
 ```
 
 ## Common Interview Questions
