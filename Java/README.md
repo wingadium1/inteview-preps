@@ -90,6 +90,7 @@ Note: Synchronized wrappers provide thread safety but with less efficiency than 
 | Sorted Map | TreeMap | ConcurrentSkipListMap |
 | Sorted Set | TreeSet | ConcurrentSkipListSet |
 | Queue | ArrayDeque | ConcurrentLinkedQueue |
+| Deque | ArrayDeque | ConcurrentLinkedDeque |
 | Priority Queue | PriorityQueue | PriorityBlockingQueue |
 
 **When to Use Thread-Safe Collections**:
@@ -273,11 +274,11 @@ for (String item : concurrentList) {
 
 // HashMap vs ConcurrentHashMap
 Map<String, String> regularMap = new HashMap<>();
-// Not thread-safe - can cause data corruption or infinite loops
+// Not thread-safe - can cause data corruption in multi-threaded scenarios
 
 ConcurrentHashMap<String, String> threadSafeMap = new ConcurrentHashMap<>();
 // Thread-safe - multiple threads can read/write safely
-threadSafeMap.forEach((k, v) -> System.out.println(k + ": " + v));
+threadSafeMap.forEach((k, v) -> System.out.println(k + ": " + v)); // For demo only
 ```
 
 ## Best Practices
