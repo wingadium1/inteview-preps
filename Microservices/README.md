@@ -306,10 +306,485 @@ resilience4j:
 
 ### 7. Data Management
 
-#### Database per Service
-- Each service owns its database
-- No shared databases
-- Loose coupling
+#### Database Options
+
+**1. Shared Database**
+
+A single database shared by multiple microservices.
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  Order      │    │  Inventory  │    │  Payment    │
+│  Service    │    │  Service    │    │  Service    │
+└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+       │                  │                  │
+       └──────────────────┴──────────────────┘
+                          │
+                   ┌──────▼──────┐
+                   │   Shared    │
+                   │  Database   │
+                   └─────────────┘
+```
+
+**Advantages:**
+- Simple to implement and understand
+- ACID transactions across tables
+- Easy to perform joins
+- Single point of data management
+- No data duplication
+
+**Disadvantages:**
+- Tight coupling between services
+- Schema changes affect multiple services
+- Difficult to scale specific services
+- Single point of failure
+- Teams cannot work independently
+- Technology lock-in (same database for all services)
+
+**2. Database per Service**
+
+Each microservice has its own database, completely isolated from other services.
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  Order      │    │  Inventory  │    │  Payment    │
+│  Service    │    │  Service    │    │  Service    │
+└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+       │                  │                  │
+  ┌────▼────┐       ┌─────▼─────┐      ┌─────▼─────┐
+  │ Order   │       │ Inventory │      │ Payment   │
+  │   DB    │       │    DB     │      │    DB     │
+  └─────────┘       └───────────┘      └───────────┘
+```
+
+**Advantages:**
+- Loose coupling between services
+- Independent scaling
+- Technology flexibility (polyglot persistence)
+- Service autonomy
+- Fault isolation
+- Independent deployments
+
+**Disadvantages:**
+- No ACID transactions across services
+- Data duplication
+- Complex queries across services
+- Eventual consistency
+- More complex to implement
+
+#### Data Consistency in Database per Service
+
+When using database per service, ensuring data consistency becomes challenging. Here are the main approaches:
+
+**1. Saga Pattern**
+
+Manage distributed transactions as a sequence of local transactions.
+
+**2. Two-Phase Commit (2PC)**
+
+Distributed transaction protocol (not recommended for microservices due to blocking).
+
+```java
+// Example: Avoid 2PC in microservices
+// 2PC blocks resources and doesn't scale well
+```
+
+**3. Event Sourcing**
+
+Store all changes as a sequence of events.
+
+```java
+@Entity
+public class OrderEvent {
+    private String eventId;
+    private String orderId;
+    private String eventType; // ORDER_CREATED, ORDER_CONFIRMED, ORDER_CANCELLED
+    private LocalDateTime timestamp;
+    private String payload;
+}
+
+@Service
+public class OrderEventStore {
+    public void saveEvent(OrderEvent event) {
+        eventRepository.save(event);
+        // Publish event to message broker
+        eventPublisher.publish(event);
+    }
+    
+    public Order reconstructOrder(String orderId) {
+        List<OrderEvent> events = eventRepository.findByOrderId(orderId);
+        Order order = new Order();
+        
+        for (OrderEvent event : events) {
+            switch (event.getEventType()) {
+                case "ORDER_CREATED":
+                    order.apply(new OrderCreatedEvent(event));
+                    break;
+                case "ORDER_CONFIRMED":
+                    order.apply(new OrderConfirmedEvent(event));
+                    break;
+                case "ORDER_CANCELLED":
+                    order.apply(new OrderCancelledEvent(event));
+                    break;
+            }
+        }
+        return order;
+    }
+}
+```
+
+**4. Eventual Consistency with Events**
+
+Services publish events when data changes, and other services subscribe to these events.
+
+```java
+// Order Service - Publisher
+@Service
+public class OrderService {
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    
+    @Transactional
+    public Order createOrder(OrderRequest request) {
+        Order order = new Order(request);
+        order.setStatus(OrderStatus.PENDING);
+        orderRepository.save(order);
+        
+        // Publish event
+        OrderCreatedEvent event = new OrderCreatedEvent(
+            order.getId(),
+            order.getUserId(),
+            order.getItems(),
+            order.getTotalAmount()
+        );
+        eventPublisher.publishEvent(event);
+        
+        return order;
+    }
+}
+
+// Inventory Service - Subscriber
+@Service
+public class InventoryEventHandler {
+    
+    @Autowired
+    private InventoryRepository inventoryRepository;
+    
+    @TransactionalEventListener
+    public void handleOrderCreated(OrderCreatedEvent event) {
+        try {
+            // Reserve inventory
+            for (OrderItem item : event.getItems()) {
+                Inventory inventory = inventoryRepository.findByProductId(item.getProductId());
+                if (inventory.getQuantity() >= item.getQuantity()) {
+                    inventory.reserve(item.getQuantity());
+                    inventoryRepository.save(inventory);
+                } else {
+                    // Publish failure event
+                    eventPublisher.publish(new InventoryReservationFailedEvent(event.getOrderId()));
+                    return;
+                }
+            }
+            // Publish success event
+            eventPublisher.publish(new InventoryReservedEvent(event.getOrderId()));
+        } catch (Exception e) {
+            // Handle error and publish compensation event
+            eventPublisher.publish(new InventoryReservationFailedEvent(event.getOrderId()));
+        }
+    }
+}
+```
+
+**5. Compensating Transactions**
+
+Undo operations when a step in the distributed transaction fails.
+
+```java
+@Service
+public class OrderCompensationService {
+    
+    public void compensateOrder(String orderId) {
+        // Step 1: Cancel payment
+        try {
+            paymentService.refundPayment(orderId);
+        } catch (Exception e) {
+            log.error("Failed to refund payment for order: " + orderId, e);
+        }
+        
+        // Step 2: Release inventory
+        try {
+            inventoryService.releaseInventory(orderId);
+        } catch (Exception e) {
+            log.error("Failed to release inventory for order: " + orderId, e);
+        }
+        
+        // Step 3: Update order status
+        Order order = orderRepository.findById(orderId);
+        order.setStatus(OrderStatus.CANCELLED);
+        orderRepository.save(order);
+    }
+}
+```
+
+**6. Read Replicas and Data Synchronization**
+
+Maintain read-only copies of data from other services.
+
+```java
+// User Service maintains customer data
+// Order Service maintains a read-only copy
+
+@Service
+public class CustomerDataSync {
+    
+    @KafkaListener(topics = "customer-updates")
+    public void syncCustomerData(CustomerUpdatedEvent event) {
+        CustomerReadModel customer = customerReadRepository.findById(event.getCustomerId())
+            .orElse(new CustomerReadModel());
+        
+        customer.setId(event.getCustomerId());
+        customer.setName(event.getName());
+        customer.setEmail(event.getEmail());
+        
+        customerReadRepository.save(customer);
+    }
+}
+
+// Order Service can now query customer data locally
+@Service
+public class OrderService {
+    public Order createOrder(OrderRequest request) {
+        // No remote call needed - data is local
+        CustomerReadModel customer = customerReadRepository.findById(request.getCustomerId());
+        Order order = new Order(customer, request.getItems());
+        return orderRepository.save(order);
+    }
+}
+```
+
+#### Architecture Migration Example: Database Per Service → Shared Database
+
+**Scenario**: E-commerce system with Order and Inventory services
+
+**Initial Architecture (Database Per Service with RPC)**
+
+```java
+// Order Service - Makes RPC calls to Inventory Service
+@Service
+public class OrderService {
+    
+    @Autowired
+    private RestTemplate restTemplate;
+    
+    public Order createOrder(OrderRequest request) {
+        // Remote call to check inventory
+        InventoryCheckResponse inventoryResponse = restTemplate.postForObject(
+            "http://inventory-service/api/inventory/check",
+            request.getItems(),
+            InventoryCheckResponse.class
+        );
+        
+        if (!inventoryResponse.isAvailable()) {
+            throw new InsufficientInventoryException();
+        }
+        
+        Order order = new Order(request);
+        orderRepository.save(order);
+        
+        // Another remote call to reserve inventory
+        restTemplate.postForObject(
+            "http://inventory-service/api/inventory/reserve",
+            new InventoryReservationRequest(order.getId(), request.getItems()),
+            InventoryReservationResponse.class
+        );
+        
+        return order;
+    }
+    
+    public List<OrderWithInventory> getOrdersWithInventoryStatus() {
+        List<Order> orders = orderRepository.findAll();
+        List<OrderWithInventory> result = new ArrayList<>();
+        
+        // N+1 problem - remote call for each order
+        for (Order order : orders) {
+            InventoryStatus status = restTemplate.getForObject(
+                "http://inventory-service/api/inventory/status/" + order.getId(),
+                InventoryStatus.class
+            );
+            result.add(new OrderWithInventory(order, status));
+        }
+        
+        return result;
+    }
+}
+```
+
+**Migrated Architecture (Shared Database with Join Queries)**
+
+```java
+// Shared database schema
+/*
+CREATE TABLE orders (
+    order_id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36),
+    total_amount DECIMAL(10,2),
+    status VARCHAR(20),
+    created_at TIMESTAMP
+);
+
+CREATE TABLE order_items (
+    item_id VARCHAR(36) PRIMARY KEY,
+    order_id VARCHAR(36),
+    product_id VARCHAR(36),
+    quantity INT,
+    price DECIMAL(10,2),
+    FOREIGN KEY (order_id) REFERENCES orders(order_id),
+    FOREIGN KEY (product_id) REFERENCES inventory(product_id)
+);
+
+CREATE TABLE inventory (
+    product_id VARCHAR(36) PRIMARY KEY,
+    product_name VARCHAR(255),
+    quantity INT,
+    reserved_quantity INT,
+    available_quantity INT GENERATED ALWAYS AS (quantity - reserved_quantity)
+);
+*/
+
+// Unified Service or Order Service with direct DB access
+@Service
+public class OrderService {
+    
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    @Autowired
+    private OrderRepository orderRepository;
+    
+    @Transactional
+    public Order createOrder(OrderRequest request) {
+        // Single transaction - check and reserve inventory
+        for (OrderItemRequest item : request.getItems()) {
+            // Lock row for update
+            Integer available = jdbcTemplate.queryForObject(
+                "SELECT available_quantity FROM inventory WHERE product_id = ? FOR UPDATE",
+                Integer.class,
+                item.getProductId()
+            );
+            
+            if (available < item.getQuantity()) {
+                throw new InsufficientInventoryException();
+            }
+            
+            // Update inventory in same transaction
+            jdbcTemplate.update(
+                "UPDATE inventory SET reserved_quantity = reserved_quantity + ? WHERE product_id = ?",
+                item.getQuantity(),
+                item.getProductId()
+            );
+        }
+        
+        // Create order - all in one ACID transaction
+        Order order = new Order(request);
+        return orderRepository.save(order);
+    }
+    
+    public List<OrderWithInventory> getOrdersWithInventoryStatus() {
+        // Single query with JOIN - no N+1 problem
+        String query = """
+            SELECT 
+                o.order_id, o.user_id, o.total_amount, o.status, o.created_at,
+                oi.product_id, oi.quantity, oi.price,
+                i.product_name, i.available_quantity
+            FROM orders o
+            JOIN order_items oi ON o.order_id = oi.order_id
+            JOIN inventory i ON oi.product_id = i.product_id
+            ORDER BY o.created_at DESC
+        """;
+        
+        return jdbcTemplate.query(query, new OrderWithInventoryRowMapper());
+    }
+}
+```
+
+**Comparison: RPC vs Join Queries**
+
+| Aspect | Database Per Service (RPC) | Shared Database (Join) |
+|--------|---------------------------|------------------------|
+| **Transaction** | Distributed (Saga, 2PC) | Single ACID transaction |
+| **Data Consistency** | Eventual consistency | Immediate consistency |
+| **Performance** | Multiple network calls, latency | Single query, faster |
+| **Scalability** | Independent service scaling | Limited by shared database |
+| **Coupling** | Loose coupling | Tight coupling via schema |
+| **Complexity** | High (distributed transactions) | Low (traditional RDBMS) |
+| **Failure Handling** | Complex compensation logic | Rollback on error |
+| **Network Calls** | Multiple (N+1 problem possible) | None (local DB access) |
+| **Query Flexibility** | Limited, need API for each query | Full SQL joins available |
+| **Schema Evolution** | Independent | Coordinated changes needed |
+| **Technology Choice** | Polyglot persistence | Single database technology |
+| **Team Autonomy** | High | Low |
+
+**Migration Steps**
+
+```java
+// Step 1: Dual Write Pattern (Transition Phase)
+@Service
+public class OrderServiceTransition {
+    
+    @Autowired
+    private OrderRepository orderRepository; // New shared DB
+    
+    @Autowired
+    private LegacyOrderRepository legacyOrderRepository; // Old service DB
+    
+    @Transactional
+    public Order createOrder(OrderRequest request) {
+        Order order = new Order(request);
+        
+        // Write to both databases during migration
+        orderRepository.save(order);
+        legacyOrderRepository.save(order);
+        
+        return order;
+    }
+}
+
+// Step 2: Data Migration Script
+@Component
+public class DataMigrationService {
+    
+    public void migrateOrderData() {
+        List<Order> legacyOrders = legacyOrderRepository.findAll();
+        
+        for (Order order : legacyOrders) {
+            if (!orderRepository.existsById(order.getId())) {
+                orderRepository.save(order);
+            }
+        }
+        
+        log.info("Migrated {} orders", legacyOrders.size());
+    }
+}
+
+// Step 3: Remove RPC calls, use direct queries
+// Step 4: Decommission old service databases
+```
+
+**When to Use Each Approach**
+
+**Use Database Per Service when:**
+- Service independence is critical
+- Teams need autonomy
+- Different data models/technologies needed
+- Services scale differently
+- Long-term flexibility is priority
+
+**Use Shared Database when:**
+- Strong consistency is required
+- Complex queries across entities
+- Simple deployment is preferred
+- Team is small and coordinated
+- Legacy migration constraints
 
 #### Saga Pattern
 Manage distributed transactions across services
