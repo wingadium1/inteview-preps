@@ -486,6 +486,7 @@ def ensure_idempotency(idempotency_key, operation_func, ttl=86400):
     Ensure operation is executed only once for a given idempotency key
     Returns: (result, was_cached)
     """
+    RETRY_DELAY_S = 0.1  # Delay before retrying to check cache
     cache_key = f"idempotency:{idempotency_key}"
     
     # Check if operation already completed
@@ -499,7 +500,7 @@ def ensure_idempotency(idempotency_key, operation_func, ttl=86400):
     
     if not acquired:
         # Another process is executing, wait and retry
-        time.sleep(0.1)
+        time.sleep(RETRY_DELAY_S)
         cached_result = r.get(cache_key)
         if cached_result:
             return json.loads(cached_result), True
@@ -573,28 +574,40 @@ def process_payment(payment_id, amount):
 **4. Redlock Algorithm (Advanced):**
 ```python
 # Use multiple Redis instances for stronger guarantees
-def acquire_redlock(lock_name, ttl, redis_instances):
-    """Acquire lock on majority of Redis instances"""
+DRIFT_FACTOR_MS = 100  # Clock drift compensation in milliseconds
+RETRY_DELAY_S = 0.1    # Delay between retries
+
+def acquire_redlock(lock_name, ttl_seconds, redis_instances):
+    """
+    Acquire lock on majority of Redis instances
+    Args:
+        lock_name: Name of the lock
+        ttl_seconds: Time to live in seconds
+        redis_instances: List of Redis client instances
+    Returns:
+        (lock_id, success): Tuple of lock identifier and success boolean
+    """
     lock_id = str(uuid.uuid4())
     start_time = time.time()
+    ttl_ms = ttl_seconds * 1000  # Convert to milliseconds
     
     # Try to acquire lock on all instances
     acquired_count = 0
     for r_instance in redis_instances:
-        if r_instance.set(lock_name, lock_id, nx=True, px=ttl):
+        if r_instance.set(lock_name, lock_id, nx=True, px=ttl_ms):
             acquired_count += 1
     
     # Check if acquired on majority
-    elapsed_time = (time.time() - start_time) * 1000
-    validity_time = ttl - elapsed_time - 100  # drift compensation
+    elapsed_time_ms = (time.time() - start_time) * 1000
+    validity_time_ms = ttl_ms - elapsed_time_ms - DRIFT_FACTOR_MS
     
-    if acquired_count >= len(redis_instances) // 2 + 1 and validity_time > 0:
+    if acquired_count >= len(redis_instances) // 2 + 1 and validity_time_ms > 0:
         return lock_id, True
     else:
         # Failed to acquire majority, release all
         for r_instance in redis_instances:
             try:
-                release_lock_instance(r_instance, lock_name, lock_id)
+                release_lock(lock_name, lock_id)
             except:
                 pass
         return None, False
