@@ -670,6 +670,8 @@ CREATE TABLE inventory (
     product_name VARCHAR(255),
     quantity INT,
     reserved_quantity INT,
+    -- Generated/Computed column (PostgreSQL 12+, MySQL 5.7+)
+    -- For older databases, calculate in application or use a view
     available_quantity INT GENERATED ALWAYS AS (quantity - reserved_quantity)
 );
 */
