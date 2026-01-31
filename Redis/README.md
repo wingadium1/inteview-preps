@@ -350,16 +350,58 @@ def get_user_rank(user_id):
     return r.zrevrank("leaderboard", user_id)
 ```
 
-#### 5. Distributed Lock
+#### 5. Distributed Lock and Idempotency
+
+##### Understanding Redis Locks vs Pessimistic Locks
+
+**Traditional Pessimistic Lock (Database):**
+- Blocks other transactions until lock is released
+- Example: `SELECT ... FOR UPDATE` in MySQL
+- Held until transaction commit/rollback
+- Strong consistency guarantees
+- Automatic release on connection failure
+- No expiration time (tied to transaction)
+
+**Redis Distributed Lock:**
+- Non-blocking: fail fast or retry with backoff
+- Time-limited: expires to prevent deadlocks
+- Best-effort: good in practice but not as strong as DB locks
+- Used for distributed mutual exclusion
+- No transactional coupling with your data store
+
+##### When to Use Redis Locks
+
+**Good Use Cases:**
+1. **Multiple instances coordination:**
+   - Only one instance should send periodic billing job
+   - Prevent duplicate scheduled tasks across services
+
+2. **Idempotent or retryable operations:**
+   - Can tolerate occasional overlaps
+   - Duplicate detection mechanisms in place
+
+3. **Short critical sections:**
+   - Operations complete in seconds
+   - Can choose safe TTLs
+
+**When NOT to Use Redis Locks:**
+- Need strong consistency for critical data updates
+- Operations require DB-level transactional guarantees
+- Cannot tolerate any race conditions
+- Critical section may take longer than reasonable TTL
+
+##### Basic Redis Lock Implementation
 ```python
 import redis
 import uuid
+import time
 
 r = redis.Redis(host='localhost', port=6379, db=0)
 
 def acquire_lock(lock_name, ttl=10):
     """Acquire distributed lock with unique identifier"""
     lock_id = str(uuid.uuid4())
+    # SET with NX (only if not exists) and EX (expiration)
     acquired = r.set(lock_name, lock_id, nx=True, ex=ttl)
     return (lock_id, acquired) if acquired else (None, False)
 
@@ -373,7 +415,230 @@ def release_lock(lock_name, lock_id):
     end
     """
     return r.eval(lua_script, 1, lock_name, lock_id)
+
+# Usage example
+def process_job_with_lock(job_id):
+    lock_name = f"lock:job:{job_id}"
+    lock_id, acquired = acquire_lock(lock_name, ttl=30)
+    
+    if not acquired:
+        print("Could not acquire lock - another instance is processing")
+        return False
+    
+    try:
+        # Critical section
+        print("Processing job...")
+        time.sleep(2)
+        print("Job completed")
+        return True
+    finally:
+        # Always release lock
+        release_lock(lock_name, lock_id)
 ```
+
+##### Advanced: Lock with Auto-Extension (Heartbeat)
+```python
+import threading
+import time
+
+def acquire_lock_with_extension(lock_name, ttl=30, extension_interval=10):
+    """Acquire lock with automatic TTL extension"""
+    lock_id = str(uuid.uuid4())
+    acquired = r.set(lock_name, lock_id, nx=True, ex=ttl)
+    
+    if not acquired:
+        return None, False
+    
+    # Start background thread to extend lock
+    stop_event = threading.Event()
+    
+    def extend_lock():
+        while not stop_event.is_set():
+            time.sleep(extension_interval)
+            lua_extend = """
+            if redis.call("get", KEYS[1]) == ARGV[1] then
+                return redis.call("expire", KEYS[1], ARGV[2])
+            else
+                return 0
+            end
+            """
+            r.eval(lua_extend, 1, lock_name, lock_id, ttl)
+    
+    extension_thread = threading.Thread(target=extend_lock, daemon=True)
+    extension_thread.start()
+    
+    return (lock_id, stop_event), True
+
+def release_extended_lock(lock_name, lock_data):
+    """Release lock and stop extension thread"""
+    lock_id, stop_event = lock_data
+    stop_event.set()
+    release_lock(lock_name, lock_id)
+```
+
+##### Idempotency Pattern with Redis
+```python
+import hashlib
+import json
+
+def ensure_idempotency(idempotency_key, operation_func, ttl=86400):
+    """
+    Ensure operation is executed only once for a given idempotency key
+    Returns: (result, was_cached)
+    """
+    cache_key = f"idempotency:{idempotency_key}"
+    
+    # Check if operation already completed
+    cached_result = r.get(cache_key)
+    if cached_result:
+        return json.loads(cached_result), True
+    
+    # Acquire lock to prevent concurrent execution
+    lock_name = f"lock:{cache_key}"
+    lock_id, acquired = acquire_lock(lock_name, ttl=10)
+    
+    if not acquired:
+        # Another process is executing, wait and retry
+        time.sleep(0.1)
+        cached_result = r.get(cache_key)
+        if cached_result:
+            return json.loads(cached_result), True
+        raise Exception("Operation in progress by another instance")
+    
+    try:
+        # Double-check cache after acquiring lock
+        cached_result = r.get(cache_key)
+        if cached_result:
+            return json.loads(cached_result), True
+        
+        # Execute operation
+        result = operation_func()
+        
+        # Cache result for 24 hours
+        r.setex(cache_key, ttl, json.dumps(result))
+        
+        return result, False
+    finally:
+        release_lock(lock_name, lock_id)
+
+# Usage example
+def process_payment(payment_id, amount):
+    """Process payment with idempotency"""
+    idempotency_key = f"payment:{payment_id}"
+    
+    def do_payment():
+        # Actual payment processing
+        print(f"Processing payment {payment_id} for ${amount}")
+        # Call payment gateway, update database, etc.
+        return {"status": "success", "payment_id": payment_id}
+    
+    result, was_cached = ensure_idempotency(idempotency_key, do_payment)
+    
+    if was_cached:
+        print("Payment already processed - returning cached result")
+    
+    return result
+```
+
+##### Limitations and Trade-offs
+
+**1. No Transactional Coupling:**
+- Redis lock is separate from your database transaction
+- Cannot guarantee atomicity across Redis and DB
+- Example issue:
+  ```
+  1. Acquire Redis lock ✓
+  2. Update database ✓
+  3. Crash before releasing lock ✗
+  4. Lock expires eventually, but others blocked temporarily
+  ```
+
+**2. Lock Expiry vs Correctness:**
+- If critical section takes longer than TTL, lock expires
+- Another worker can acquire lock while first is still working
+- Solutions:
+  - Set conservative TTL
+  - Implement lock extension/heartbeat (adds complexity)
+  - Design operations to complete quickly
+
+**3. Failure Modes:**
+- Redis process crashes → locks lost
+- Network partitions → multiple locks possible
+- Clock skew → timing issues
+- Solutions:
+  - Use Redlock algorithm for higher guarantees
+  - Use ZooKeeper or etcd for stronger consistency
+  - Accept best-effort nature for non-critical operations
+
+**4. Redlock Algorithm (Advanced):**
+```python
+# Use multiple Redis instances for stronger guarantees
+def acquire_redlock(lock_name, ttl, redis_instances):
+    """Acquire lock on majority of Redis instances"""
+    lock_id = str(uuid.uuid4())
+    start_time = time.time()
+    
+    # Try to acquire lock on all instances
+    acquired_count = 0
+    for r_instance in redis_instances:
+        if r_instance.set(lock_name, lock_id, nx=True, px=ttl):
+            acquired_count += 1
+    
+    # Check if acquired on majority
+    elapsed_time = (time.time() - start_time) * 1000
+    validity_time = ttl - elapsed_time - 100  # drift compensation
+    
+    if acquired_count >= len(redis_instances) // 2 + 1 and validity_time > 0:
+        return lock_id, True
+    else:
+        # Failed to acquire majority, release all
+        for r_instance in redis_instances:
+            try:
+                release_lock_instance(r_instance, lock_name, lock_id)
+            except:
+                pass
+        return None, False
+```
+
+##### Best Practices for Redis Locks
+
+1. **Always set expiration (TTL):**
+   - Prevents deadlocks if process crashes
+   - Choose TTL > expected operation time + buffer
+
+2. **Use unique lock identifiers:**
+   - Prevents releasing another process's lock
+   - Use UUID or similar
+
+3. **Atomic release with Lua:**
+   - Check ownership before releasing
+   - Prevents race conditions
+
+4. **Retry with exponential backoff:**
+   ```python
+   def acquire_lock_with_retry(lock_name, max_retries=5):
+       for attempt in range(max_retries):
+           lock_id, acquired = acquire_lock(lock_name)
+           if acquired:
+               return lock_id, True
+           time.sleep(0.1 * (2 ** attempt))  # Exponential backoff
+       return None, False
+   ```
+
+5. **Monitor lock metrics:**
+   - Track lock acquisition time
+   - Alert on high contention
+   - Monitor lock hold time
+
+6. **Design for idempotency:**
+   - Make operations naturally idempotent when possible
+   - Store operation results for deduplication
+   - Use idempotency keys for critical operations
+
+7. **Fallback strategies:**
+   - Have a plan if lock acquisition fails
+   - Consider queue-based alternatives
+   - Implement circuit breakers
 
 ## Common Interview Questions
 
@@ -397,6 +662,11 @@ def release_lock(lock_name, lock_id):
 3. What is the difference between KEYS and SCAN?
 4. How do you optimize Redis performance?
 5. How do you monitor Redis in production?
+6. What's the difference between Redis distributed locks and database pessimistic locks?
+7. How do you handle lock expiration issues in Redis?
+8. How would you implement idempotency using Redis?
+9. What is the Redlock algorithm and when should you use it?
+10. What are the limitations of using Redis for distributed locking?
 
 ## Redis Configuration
 
@@ -446,6 +716,11 @@ timeout 0
 8. Use pipelining for bulk operations
 9. Monitor slow queries
 10. Secure Redis (password, firewall)
+11. Always set TTL on distributed locks to prevent deadlocks
+12. Use unique identifiers for lock values to prevent incorrect releases
+13. Implement idempotency for critical operations
+14. Use Lua scripts for atomic lock operations
+15. Design operations to be naturally idempotent when possible
 
 ## Common Pitfalls
 1. Not setting expiration on cache keys
@@ -455,6 +730,13 @@ timeout 0
 5. Not using connection pooling
 6. Not securing Redis instance
 7. Forgetting to handle Redis failures
+8. Not setting TTL on distributed locks (can cause deadlocks)
+9. Releasing locks without verifying ownership
+10. Using Redis locks for operations that need DB-level consistency
+11. Setting lock TTL too short for the operation duration
+12. Not implementing retry logic for lock acquisition
+13. Treating Redis locks as true pessimistic locks
+14. Not considering lock extension for long-running operations
 
 ## Resources
 - Redis Documentation
