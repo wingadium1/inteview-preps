@@ -382,11 +382,34 @@ Manage distributed transactions as a sequence of local transactions.
 
 **2. Two-Phase Commit (2PC)**
 
-Distributed transaction protocol (not recommended for microservices due to blocking).
+Distributed transaction protocol (not recommended for microservices due to blocking nature).
 
 ```java
-// Example: Avoid 2PC in microservices
-// 2PC blocks resources and doesn't scale well
+// NOT RECOMMENDED: Two-Phase Commit in Microservices
+// Problems with 2PC:
+// - Blocks resources during prepare and commit phases
+// - Coordinator becomes single point of failure
+// - Long transaction locks reduce throughput
+// - Timeout handling is complex
+// - Doesn't scale well in distributed systems
+
+@Transactional
+public void createOrderWith2PC(Order order) {
+    // Phase 1: Prepare - All services lock resources
+    boolean inventoryPrepared = inventoryService.prepareReservation(order);
+    boolean paymentPrepared = paymentService.preparePayment(order);
+    
+    // Phase 2: Commit or Rollback
+    if (inventoryPrepared && paymentPrepared) {
+        inventoryService.commitReservation(order);
+        paymentService.commitPayment(order);
+    } else {
+        // Rollback if any service failed to prepare
+        inventoryService.rollbackReservation(order);
+        paymentService.rollbackPayment(order);
+    }
+}
+// Use Saga pattern instead for better scalability and resilience
 ```
 
 **3. Event Sourcing**
@@ -691,6 +714,7 @@ public class OrderService {
     
     public List<OrderWithInventory> getOrdersWithInventoryStatus() {
         // Single query with JOIN - no N+1 problem
+        // Note: Using text blocks (Java 15+). For Java 11, use string concatenation
         String query = """
             SELECT 
                 o.order_id, o.user_id, o.total_amount, o.status, o.created_at,
