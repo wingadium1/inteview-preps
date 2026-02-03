@@ -40,17 +40,19 @@ Object-Relational Mapping (ORM) with Hibernate, entity mapping, HQL, and perform
 - Performance Optimization
 - Transaction Management
 
-### 4. [AWS (Amazon Web Services)](./AWS/README.md)
-Cloud computing with AWS services, architecture patterns, and best practices.
+### 4. [Cloud Computing](./CloudComputing/README.md)
+Cloud computing fundamentals, distributed computing platforms, and cloud service models across major providers.
 
 **Key Topics:**
-- Compute Services (EC2, Lambda)
-- Storage Services (S3, EBS, EFS)
-- Database Services (RDS, DynamoDB)
-- Networking (VPC, CloudFront, Route 53)
-- Security & IAM
-- Monitoring (CloudWatch, CloudTrail)
-- Application Integration (SQS, SNS)
+- Cloud Computing Fundamentals
+- Distributed Computing Platforms
+- Elastic Compute vs Bare Metal Compute
+- Cloud Service Models (IaaS, PaaS, SaaS)
+- Compute Services (VMs, Serverless, Containers)
+- Storage Services (Object, Block, File Storage)
+- Database Services (SQL, NoSQL)
+- Networking & Security
+- Multi-cloud Architecture
 
 ### 5. [DevOps](./DevOps/README.md)
 DevOps practices, CI/CD pipelines, Infrastructure as Code, and automation.
@@ -136,8 +138,8 @@ Microservices architecture, patterns, communication, and best practices.
 - Day 25-28: Redis and caching strategies
 
 #### Week 5-6: Cloud & DevOps
-- Day 29-32: AWS core services
-- Day 33-35: AWS networking and security
+- Day 29-32: Cloud computing fundamentals and core services
+- Day 33-35: Cloud networking, security, and distributed computing
 - Day 36-38: CI/CD pipelines
 - Day 39-42: Infrastructure as Code
 
@@ -161,13 +163,14 @@ Microservices architecture, patterns, communication, and best practices.
 - Official documentation for each technology
 - LeetCode, HackerRank for coding practice
 - System Design Primer on GitHub
-- AWS Training and Certification
+- Cloud Provider Training (AWS, Azure, GCP)
+- Stanford CS349D: Cloud Computing Technology
 - Kubernetes Documentation
 
 ### Practice Platforms
 - **Coding**: LeetCode, HackerRank, CodeSignal
 - **System Design**: Educative.io, Exponent
-- **AWS**: AWS Free Tier, AWS Workshops
+- **Cloud Computing**: AWS Free Tier, Azure Free Account, GCP Free Tier
 - **Kubernetes**: Katacoda, Play with Kubernetes
 
 ## 🤝 Contributing
