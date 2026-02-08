@@ -51,13 +51,15 @@
 // Transient state
 User user = new User("John");
 
-// Persistent state
+// Persistent state - associate with Hibernate Session
+Session session = sessionFactory.openSession();
 session.save(user);
 
-// Detached state
+// Detached state - session is closed
 session.close();
 
-// Removed state
+// Removed state - mark for deletion
+session = sessionFactory.openSession();
 session.delete(user);
 ```
 
@@ -722,8 +724,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
     
     List<User> findByStatus(UserStatus status);
     
-    // Custom JPQL query
-    @Query("SELECT u FROM User u WHERE u.email LIKE %:domain")
+    // Custom JPQL query - demonstrating LIKE with pattern
+    @Query("SELECT u FROM User u WHERE u.email LIKE CONCAT('%@', :domain)")
     List<User> findByEmailDomain(@Param("domain") String domain);
     
     // Native SQL query
@@ -872,7 +874,7 @@ public interface UserMapper {
                 AND status = #{status}
             </if>
             <if test="createdAfter != null">
-                AND created_at &gt;= #{createdAfter}
+                <![CDATA[AND created_at >= #{createdAfter}]]>
             </if>
         </where>
         ORDER BY created_at DESC
@@ -941,7 +943,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 public class Order {
     
     @ManyToOne(fetch = FetchType.LAZY)
-    @BatchSize(size = 10) // Fetch in batches of 10 / Tải theo lô 10
+    @BatchSize(size = 10) // Fetch in batches of 10 - tune based on typical data / Tải theo lô 10
     private User user;
 }
 ```
@@ -1107,7 +1109,7 @@ public class OrderService {
 
 ❌ **Don't / Không nên:**
 - Make external API calls within transactions - Gọi API bên ngoài trong giao dịch
-- Use transactions for read operations by default - Dùng giao dịch cho đọc mặc định
+- Use write transactions for read-only operations - Dùng giao dịch ghi cho thao tác chỉ đọc
 - Ignore transaction boundaries - Bỏ qua ranh giới giao dịch
 - Mix transactional and non-transactional code - Trộn code có và không có giao dịch
 
