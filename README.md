@@ -28,17 +28,17 @@ Spring ecosystem including Spring Boot, Spring MVC, Spring Data JPA, Spring Secu
 - Spring AOP
 - Transaction Management
 
-### 3. [Hibernate](./Hibernate/README.md)
-Object-Relational Mapping (ORM) with Hibernate, entity mapping, HQL, and performance optimization.
+### 3. [ORM - Object-Relational Mapping](./ORM/README.md)
+Comprehensive guide to ORM frameworks including Hibernate, Spring Data JPA, and MyBatis. Covers core concepts, framework comparison, and when to use each.
 
 **Key Topics:**
-- ORM Concepts
-- Entity Mapping & Relationships
-- Hibernate Session Lifecycle
-- HQL & Criteria API
-- Caching (First-level, Second-level)
-- Performance Optimization
-- Transaction Management
+- ORM Fundamentals (Persistence, Transactions, Caching)
+- Fetching Strategies & Locking Mechanisms
+- Hibernate - Full JPA Implementation
+- Spring Data JPA - Repository Pattern
+- MyBatis - SQL-First Approach
+- Framework Comparison & Decision Matrix
+- Performance Optimization & Best Practices
 
 ### 4. [Cloud Computing](./CloudComputing/README.md)
 Cloud computing fundamentals, distributed computing platforms, and cloud service models across major providers.
@@ -132,8 +132,8 @@ Microservices architecture, patterns, communication, and best practices.
 - Day 11-14: Spring MVC, Spring Data, Spring Security
 
 #### Week 3-4: Database & ORM
-- Day 15-17: Hibernate basics and entity mapping
-- Day 18-21: HQL, Criteria API, Caching
+- Day 15-17: ORM fundamentals and core concepts
+- Day 18-21: Hibernate, Spring Data JPA, and MyBatis
 - Day 22-24: SQL optimization and best practices
 - Day 25-28: Redis and caching strategies
 
